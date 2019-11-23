@@ -16,7 +16,8 @@ def debug( *args ):
 
 def main():
     options, rx   = getopts()
-    operationTree = parse_into_operation_tree( rx )
+    
+    operationTree = parse_into_operation_tree( rx, ignoreCase = options.ignoreCase )
     start, stop   = create_and_connect_nodes( operationTree )
     
     if options.debug:
@@ -380,7 +381,7 @@ class Node():
     
 ## 
 
-def parse_into_operation_tree( rx ):
+def parse_into_operation_tree( rx, ignoreCase ):
     
     # (context,contents)
     # 
@@ -482,20 +483,20 @@ def parse_into_operation_tree( rx ):
             # unspecial characters
             # 
             if cc in '?*+[](){}|{}.':
-                matchType = MatchChar( cc )
+                matchType = MatchChar( cc, ignoreCase = ignoreCase )
             
             # special characters
             # 
             elif cc == 't':
-                matchType = MatchChar( '\t' )
+                matchType = MatchChar( '\t', ignoreCase = ignoreCase )
             elif cc == 'n':
-                matchType = MatchChar( '\n' )
+                matchType = MatchChar( '\n', ignoreCase = ignoreCase )
             elif cc == 'r':
-                matchType = MatchChar( '\r' )
+                matchType = MatchChar( '\r', ignoreCase = ignoreCase )
             elif cc == 'f':
-                matchType = MatchChar( '\f' )
+                matchType = MatchChar( '\f', ignoreCase = ignoreCase )
             elif cc == 'v':
-                matchType = MatchChar( '\v' )
+                matchType = MatchChar( '\v', ignoreCase = ignoreCase )
             
             # character classes
             # 
@@ -524,7 +525,7 @@ def parse_into_operation_tree( rx ):
             elif cc == '$':
                 matchType = MatchDollar()
             else:
-                matchType = MatchChar( cc )
+                matchType = MatchChar( cc, ignoreCase = ignoreCase )
         
         stack[-1][1].append( matchType )
     
@@ -555,8 +556,9 @@ class MatchDone():
         yield '\0'
 
 class MatchChar():
-    def __init__( self, cc ):
-        self._cc = cc
+    def __init__( self, cc, ignoreCase ):
+        self._cc         = cc
+        self._ignoreCase = ignoreCase
         return
     
     def __repr__( self ):
@@ -566,7 +568,11 @@ class MatchChar():
         start.connect( self, stop )
     
     def matches( self ):
-        yield self._cc
+        if self._ignoreCase:
+            yield self._cc.upper()
+            yield self._cc.lower()
+        else:
+            yield self._cc
 
 class MatchQuestion():
     def __init__( self, mm ):
@@ -750,6 +756,13 @@ def getopts():
         dest    = 'functionName',
         default = 'knomerx',
         help    = 'a prefix for the regex bits',
+    )
+    
+    parser.add_option(
+        '-i', '--ignore-case',
+        dest    = 'ignoreCase',
+        action  = 'store_true' ,
+        default = False ,
     )
     
     options, args = parser.parse_args()
