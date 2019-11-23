@@ -139,7 +139,7 @@ def thats_one_sweet_switch_statement_you_might_say( maxChunk, cmcc, mcu ):
             else:
                 bits.append( ' ' )
             cc += 1
-            bits.append( 'case \'\\x%s\':' % hex( ord(kk) )[2:].ljust(2,'0') )
+            bits.append( 'case \'\\x%s\':' % hex( ord(kk) )[2:].rjust(2,'0') )
         bits.append( '\n' )
         
         for ii in range( maxChunk + 1 ):
