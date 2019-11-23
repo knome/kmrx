@@ -88,31 +88,64 @@ def main():
         fcmrCTriggers, cmrUTriggers
     )
     
-    # TODO ( may collapse cases around alternations, \n|\0-match-ends, case-folding, character classes, etc )
-    # combine characters with the same set of transforms
-    # remove characters that exactly match universal transforms
-    
     if options.debug:
         debug()
         debug( 'mcc', mcc )
         debug( 'mcu', mcu )
     
-    thats_one_sweet_switch_statement_you_might_say( maxChunk, mcc, mcu )
+    cmcc = coalesce_grouped_characters_with_equal_transition_sets( mcc )
+    
+    if options.debug:
+        debug()
+        debug( 'cmcc', cmcc )
+        debug( 'mcu', mcu )
+    
+    # TODO ( may collapse cases around alternations, \n|\0-match-ends, case-folding, character classes, etc )
+    # remove characters that exactly match universal transforms
+    
+    switchStatement = thats_one_sweet_switch_statement_you_might_say( maxChunk, cmcc, mcu )
+    
+    print( switchStatement )
     
     return
 
 ##
 
-def thats_one_sweet_switch_statement_you_might_say( maxChunk, mcc, mcu ):
-    print( 'switch( cc ){' )
+def thats_one_sweet_switch_statement_you_might_say( maxChunk, cmcc, mcu ):
+    bits = []
     
-    for kk, mcrs in sorted( mcc.items() ):
-        # ugly, but avoids caring about escaping
-        print( '  case \'\\x%s\': // %s ' % ( hex( ord(kk) )[2:].ljust(2,'0'), repr( kk ) ) )
+    bits.append( 'switch( cc ){\n' )
+    
+    for mcrs, kks in cmcc.items():
+        bits.append( '  //' )
+        cc = 0
+        for kk in sorted( kks ):
+            if cc == 10:
+                cc = 0
+                bits.append( '\n  // ' )
+            else:
+                bits.append( ' ' )
+            cc += 1
+            bits.append( repr( kk ) )
+        bits.append( '\n' )
+        
+        bits.append( ' ' )
+        cc = 0
+        for kk in sorted( kks ):
+            if cc == 10:
+                cc = 0
+                bits.append( '\n  ' )
+            else:
+                bits.append( ' ' )
+            cc += 1
+            bits.append( 'case \'\\x%s\':' % hex( ord(kk) )[2:].ljust(2,'0') )
+        bits.append( '\n' )
+        
         for ii in range( maxChunk + 1 ):
-            print( '    next[ %s ] = 0 ;' % ii )
-        for cr, mms in mcrs.items():
-            print( '    next[ %s ] |= ( (prev[ %s ] & %s) %s %s ); // %s ' % (
+            bits.append( '    next[ %s ] = 0 ;\n' % ii )
+        
+        for cr, mms in mcrs:
+            bits.append( '    next[ %s ] |= ( (prev[ %s ] & %s) %s %s ); // %s\n' % (
                 cr[2] ,
                 cr[0] ,
                 hex( sum( (1 << mm) for mm in mms ) ) + 'ull' ,
@@ -120,13 +153,14 @@ def thats_one_sweet_switch_statement_you_might_say( maxChunk, mcc, mcu ):
                 -cr[1] if cr[1] < 0 else cr[1] ,
                 ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
             ))
-        print( '    break;' )
+        
+        bits.append( '    break;\n\n' )
     
-    print( '  default:' )
+    bits.append( '  default:' )
     for ii in range( maxChunk + 1 ):
-        print( '    next[ %s ] = 0 ;' % ii )
+        bits.append( '    next[ %s ] = 0 ;\n' % ii )
     for cr, mms in mcu.items():
-        print( '    next[ %s ] |= ( (prev[ %s ] & %s) %s %s ); // %s ' % (
+        bits.append( '    next[ %s ] |= ( (prev[ %s ] & %s) %s %s ); // %s\n' % (
             cr[2] ,
             cr[0] ,
             hex( sum( (1 << mm) for mm in mms ) ) + 'ull',
@@ -134,8 +168,24 @@ def thats_one_sweet_switch_statement_you_might_say( maxChunk, mcc, mcu ):
             -cr[1] if cr[1] < 0 else cr[1] ,
             ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
         ))
-    print( '    break;' )
-    print( '}' )
+    bits.append( '    break;\n' )
+    bits.append( '}\n' )
+    
+    return ''.join( bits )
+
+##
+
+def coalesce_grouped_characters_with_equal_transition_sets(
+    mcc ,
+):
+    cmcc = {}
+    for kk, mcrs in mcc.items():
+        key = tuple( sorted( (cr, tuple(sorted(mms))) for cr, mms in mcrs.items() ) )
+        if key not in cmcc:
+            cmcc[ key ] = []
+        cmcc[ key ].append( kk )
+    
+    return cmcc
 
 ##
 
