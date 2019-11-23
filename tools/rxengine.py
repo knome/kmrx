@@ -400,9 +400,9 @@ def parse_into_operation_tree( rx, ignoreCase ):
             stack.append( ('escape',) )
             continue
         
-        if stack[-1][0] == 'range':
+        if stack[-1][0] == 'character-class':
             if cc == ']' and len( stack[-1][1] ) != 0:
-                mr = MatchRange( stack[-1][1] )
+                mr = MatchCharacterClass( stack[-1][1], ignoreCase = ignoreCase )
                 stack.pop()
                 stack[-1][1].append( mr )
                 continue
@@ -435,7 +435,7 @@ def parse_into_operation_tree( rx, ignoreCase ):
                 continue
             
             if cc == '[':
-                stack.append( ('range',[]) )
+                stack.append( ('character-class',[]) )
                 continue
             
             if cc == ']':
@@ -538,6 +538,70 @@ def parse_into_operation_tree( rx, ignoreCase ):
         raise Exception( 'didnt close something' )
 
 ##
+
+class MatchCharacterClass():
+    def __init__( self, spec, ignoreCase ):
+        self._spec       = spec
+        self._ignoreCase = ignoreCase
+        
+        spec = spec[:]
+        
+        self._inverted = False
+        self._cc       = set()
+        
+        if not spec:
+            return
+        
+        if spec[0] == '^':
+            self._inverted = True
+            spec.pop(0)
+        
+        dangler     = None
+        pendingDash = False
+        while spec:
+            cc = spec.pop(0)
+            if cc == '-':
+                if dangler == None:
+                    self._cc.add( '-' )
+                else:
+                    pendingDash = True
+            elif pendingDash:
+                for ii in range( min( ord(dangler), ord(cc) ), max( ord(dangler), ord(cc) ) + 1 ):
+                    self._cc.add( chr(ii) )
+                dangler = None
+                pendingDash = None
+            else:
+                dangler = cc
+        
+        if dangler != None:
+            self._cc.add( dangler )
+        
+        if pendingDash:
+            self._cc.add( pendingDash )
+        
+        return
+    
+    def create_and_thread_nodes( self, start, stop ):
+        start.connect( self, stop )
+    
+    def matches( self ):
+        if self._inverted:
+            for ii in range( 256 ):
+                cc = chr( ii )
+                if self._ignoreCase:
+                    if (cc.upper() not in self._cc) and (cc.lower() not in self._cc):
+                        yield cc.upper()
+                        yield cc.lower()
+                else:
+                    if cc not in self._cc:
+                        yield cc
+        else:
+            for cc in self._cc:
+                if self._ignoreCase:
+                    yield cc.upper()
+                    yield cc.lower()
+                else:
+                    yield cc
 
 class MatchDone():
     def __init__( self, matchNewlines = True ):
