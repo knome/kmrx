@@ -157,7 +157,7 @@ def thats_one_sweet_switch_statement_you_might_say( maxChunk, cmcc, mcu ):
         
         bits.append( '    break;\n\n' )
     
-    bits.append( '  default:' )
+    bits.append( '  default:\n' )
     for ii in range( maxChunk + 1 ):
         bits.append( '    next[ %s ] = 0 ;\n' % ii )
     for cr, mms in mcu.items():
