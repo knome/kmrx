@@ -36,8 +36,10 @@ int
 kmRx_%(rxName)s__matches(
   struct kmRx_%(rxName)s * rx
 ){
-  uint%(chunkSize)s_t * chunks = rx->chunks ;
-  return !! %(endChecks)s ;
+  uint%(chunkSize)s_t * chunks = &rx->chunks[0] ;
+  uint64_t oredEndBits = %(endChecks)s ;
+  int matched = !! oredEndBits ;
+  return matched ;
 }
 
 // process the given character, updating internal state
@@ -49,7 +51,7 @@ kmRx_%(rxName)s__step(
   struct kmRx_%(rxName)s * rx ,
   char cc
 ){
-  uint%(chunkSize)s_t * chunks = rx->chunks ;
+  uint%(chunkSize)s_t * chunks = &rx->chunks[0] ;
   %(thatIsASweetSwitchStatementYouMightSay)s
 }
 
@@ -73,7 +75,7 @@ kmRx_%(rxName)s__debug(
   while( chunkno < %(numChunks)s ){
     unsigned char bit = 0 ;
     fprintf( stderr, "chunks:\\n" );
-    while( bit < %(chunkSize)s ){
+    while( bit < %(chunkSize)su ){
       fprintf( stderr, " %%d", !! ( rx->chunks[ chunkno ] & ( 1ull << bit ) ) );
       bit ++ ;
     }
@@ -103,6 +105,7 @@ C_GREP_TEMPLATE = """
 #include <errno.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <inttypes.h>
 
 %(cHeaderTemplate)s
 
@@ -158,15 +161,14 @@ int scan_files( char ** argv ){
   
   uint64_t filesize = (uint64_t) out.st_size ;
   char *   head     = start                  ;
-  size_t   offset   = 0                      ;
+  size_t   offset   = 0u                     ;
+  
+  int success = 0 ;
   
   while( offset < filesize ){
-    // kmRx_%(rxName)s__debug( & state );
-    
-    kmRx_%(rxName)s__step( & state, start[ offset ] );
-    
     if( start[ offset ] == '\\n' ){
       if( kmRx_%(rxName)s__matches( & state ) ){
+        success = 1 ;
         size_t span = &start[offset] - head ;
         printf( "%%.*s\\n", (int) span, head );
       }
@@ -174,11 +176,15 @@ int scan_files( char ** argv ){
       head = &start[offset];
       kmRx_%(rxName)s__reset( & state );
     } else {
+      kmRx_%(rxName)s__step( & state, start[ offset ] );
       offset ++ ;
     }
   }
   
-  return 1 ;
+  fflush( stdout );
+  
+  // int 1+=success/0=failure --> exitcode 0=success/1=failure
+  return ! success ;
 }
 
 int scan_stdio(){
@@ -409,7 +415,7 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
     
     bits.append( '  default:{\n' )
     
-    for chunk in set( cr[0] for (cr,_) in mcu ):
+    for chunk in set( cr[0] for (cr,_) in mcu.items() ):
         bits.append(
             '    uint%(chunkSize)s_t prev_%(chunk)s = chunks[ %(chunk)s ];\n' % {
                 'chunkSize' : chunkSize ,
@@ -586,6 +592,10 @@ def generate_end_checks( chunkSize, ends ):
             )
         )
     return ' ( ' + ' | '.join(bits) + ' ) '
+
+## 
+
+
 
 ##
 

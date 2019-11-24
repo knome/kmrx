@@ -29,7 +29,7 @@ mkdir -p ./bld || die could not create bld/ directory
 
 ./tools/rxengine.py -g "$RX" > ./bld/source.c || die could not create source
 
-${CC}                \
+${CC}              \
     -S             \
     -O"$OPT"       \
     -Wall          \
@@ -41,7 +41,7 @@ ${CC}                \
     ./bld/source.c \
     || die failed to compile
 
-${CC}                \
+${CC}              \
     -O"$OPT"       \
     -Wall          \
     -Wextra        \
