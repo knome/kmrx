@@ -112,7 +112,7 @@ C_GREP_TEMPLATE = """
 #define USE(x) do{(void)(x);}while(0)
 
 #define KMRX_PAGE_SIZE (4096)
-#define KMRX_BUFFER_SIZE (KMRX_PAGE_SIZE * 8)
+#define KMRX_BUFFER_SIZE (KMRX_PAGE_SIZE * 64)
 
 // strings longer that buffer size in stdio/read mode will be dropped
 
@@ -178,7 +178,7 @@ int scan_files_mmap( char ** argv ){
   int success = 0 ;
   
   while( offset < filesize ){
-    if( start[ offset ] == '\\n' ){
+    if( start[ offset ] == '\\n' || start[ offset ] == '\\n' ){
       if( kmRx_%(rxName)s__matches( & state ) ){
         success = 1 ;
         size_t span = &start[offset] - head ;
@@ -253,7 +253,7 @@ int scan_files_common( int fd ){
       return ! success ;
     }
     
-    ssize_t offset = end ;
+    ssize_t offset = start ;
     
     end += amount ;
     if( end == KMRX_BUFFER_SIZE ){
@@ -262,9 +262,9 @@ int scan_files_common( int fd ){
     
     int startDropping = start == end ;
     
-    while( offset != end ){
+    do {
       
-      if( buffer[ offset ] == '\\n' ){
+      if( buffer[ offset ] == '\\n' || buffer[ offset ] == '\\r' ){
         
         if( (! dropping) && kmRx_%(rxName)s__matches( & state ) ){
           success = 1 ;
@@ -301,7 +301,7 @@ int scan_files_common( int fd ){
           offset = 0 ;
         }
       }
-    }
+    } while( offset != end );
     
     if( (! dropping) && startDropping ){
       fprintf( stderr, "line too long\\n" );
