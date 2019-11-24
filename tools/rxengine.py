@@ -4,6 +4,99 @@
 # compiles non-capturing regular expression into an efficient form
 # 
 
+C_HEADER_TEMPLATE = """\
+
+#ifndef H_%(templateName)s
+#define H_%(templateName)s
+
+#include <stdint.h>
+
+struct kmRx_%(rxName)s {
+  uint%(chunkSize)s_t chunks [ %(numChunks)s ] ;
+};
+
+// reset the rx to its initial state, prior to input
+// 
+static
+inline
+void
+kmRx_%(rxName)s__reset(
+  struct kmRx_%(rxName)s * rx
+){
+  *rx = (struct kmRx_%(rxName)s) {0};
+}
+
+// whether the rx is currently in a matching state
+// 
+static
+inline
+int
+kmRx_%(rxName)s__matches(
+  struct kmRx_%(rxName)s * rx
+){
+  uint%(chunkSize)s_t * chunks = rx->chunks ;
+  return !! %(endChecks)s ;
+}
+
+// process the given character, updating internal state
+// 
+static
+inline
+void
+kmRx_%(rxName)s__step(
+  struct kmRx_%(rxName)s * rx ,
+  char cc
+){
+  uint%(chunkSize)s_t * chunks = rx->chunks ;
+  %(thatIsASweetSwitchStatementYouMightSay)s
+}
+
+#endif
+// H_%(templateName)s
+
+"""
+
+C_GREP_TEMPLATE = """
+
+// this is not grep
+
+// invoke with a file name to try to mmap the file and print lines with compiled in regex
+// invoke without a file to print lines on stdin with compiled in regex
+
+#include <stdio.h>
+
+%(cHeaderTemplate)s
+
+#define USE(x) do{(void)(x);}while(0)
+
+int scan_files( char ** );
+int scan_stdio();
+
+int
+main(
+  int     argc ,
+  char ** argv
+){
+  if( argc - 1 ){
+    return scan_files( argv + 1 );
+  } else {
+    return scan_stdio();
+  }
+  
+  return 0 ;
+}
+
+int scan_files( char ** argv ){
+  USE( argv );
+  return 1 ;
+}
+
+int scan_stdio(){
+  return 1 ;
+}
+
+"""
+
 import optparse
 import sys
 
@@ -35,7 +128,16 @@ def main():
         debug()
         debug( '<<<<<<<<<<<<<<<<' )
     
+    # if we have [0] -*-> [1] -a-> [2]
+    #    we make [0] -a-> [2]
+    # 
     backpropagate_free_transitions( transitions )
+    
+    # we used a special connection to mark transitions to success
+    # they are backpropagated along with the other connections above
+    # we now instruct the nodes to consume them and mark themselves as end states
+    # 
+    mark_ends( transitions )
     
     # we do this again because we may have cut out unrequired intermediate states entirely
     # reducing the number of states the final shifter will need to manipuate
@@ -52,6 +154,11 @@ def main():
     
     if options.debug:
         debug( transitions )
+    
+    ends = extract_ends( transitions )
+    
+    if options.debug:
+        debug( 'ends', ends )
     
     ctriggers, utriggers = group_transitions_by_trigger( transitions )
     
@@ -101,18 +208,56 @@ def main():
         debug( 'cmcc', cmcc )
         debug( 'mcu', mcu )
     
-    # TODO ( may collapse cases around alternations, \n|\0-match-ends, case-folding, character classes, etc )
+    # TODO
     # remove characters that exactly match universal transforms
     
-    switchStatement = thats_one_sweet_switch_statement_you_might_say( maxChunk, cmcc, mcu )
+    switchStatement = that_is_a_sweet_switch_statement_you_might_say(
+        maxChunk  = maxChunk          ,
+        chunkSize = options.chunkSize ,
+        cmcc      = cmcc              ,
+        mcu       = mcu               ,
+    )
     
-    print( switchStatement )
+    if options.grepish:
+        endChecks = generate_end_checks( options.chunkSize, ends )
+        
+        header = C_HEADER_TEMPLATE % {
+            'chunkSize'                              : str( options.chunkSize) ,
+            'rxName'                                 : options.name            ,
+            'templateName'                           : options.template        ,
+            'endChecks'                              : endChecks               ,
+            'thatIsASweetSwitchStatementYouMightSay' : switchStatement         ,
+            'numChunks'                              : maxChunk + 1            ,
+        }
+        
+        template = C_GREP_TEMPLATE % {
+            'cHeaderTemplate' : header ,
+        }
+        
+        print( template )
+        
+    elif options.libraryHeader:
+        endChecks = generate_end_checks( options.chunkSize, ends )
+        
+        header = C_HEADER_TEMPLATE % {
+            'chunkSize'                              : str( options.chunkSize) ,
+            'rxName'                                 : options.name            ,
+            'templateName'                           : options.template        ,
+            'endChecks'                              : endChecks               ,
+            'thatIsASweetSwitchStatementYouMightSay' : switchStatement         ,
+            'numChunks'                              : maxChunk + 1            ,
+        }
+        
+        print( header )
+        
+    else:
+        print( switchStatement )
     
     return
 
 ##
 
-def thats_one_sweet_switch_statement_you_might_say( maxChunk, cmcc, mcu ):
+def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, mcu ):
     bits = []
     
     bits.append( 'switch( cc ){\n' )
@@ -139,14 +284,24 @@ def thats_one_sweet_switch_statement_you_might_say( maxChunk, cmcc, mcu ):
             else:
                 bits.append( ' ' )
             cc += 1
-            bits.append( 'case \'\\x%s\':' % hex( ord(kk) )[2:].rjust(2,'0') )
+            bits.append( 'case \'\\x%s\':{' % hex( ord(kk) )[2:].rjust(2,'0') )
         bits.append( '\n' )
         
+        for chunk in set( cr[0] for (cr,_) in mcrs ):
+            bits.append(
+                '    uint%(chunkSize)s_t prev_%(chunk)s = chunks[ %(chunk)s ];\n' % {
+                    'chunkSize' : chunkSize ,
+                    'chunk'     : chunk     ,
+                }
+            )
+        
+        # TODO: instead we should write on first, merge on following, and 0 if untouched
+        # 
         for ii in range( maxChunk + 1 ):
-            bits.append( '    next[ %s ] = 0 ;\n' % ii )
+            bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
         
         for cr, mms in mcrs:
-            bits.append( '    next[ %s ] |= ( (prev[ %s ] & %s) %s %s ); // %s\n' % (
+            bits.append( '    chunks[ %s ] |= ( (prev_%s & %s) %s %s ); // %s\n' % (
                 cr[2] ,
                 cr[0] ,
                 hex( sum( (1 << mm) for mm in mms ) ) + 'ull' ,
@@ -156,20 +311,24 @@ def thats_one_sweet_switch_statement_you_might_say( maxChunk, cmcc, mcu ):
             ))
         
         bits.append( '    break;\n\n' )
+        bits.append( '  }\n' )
     
-    bits.append( '  default:\n' )
+    bits.append( '  default:{\n' )
     for ii in range( maxChunk + 1 ):
-        bits.append( '    next[ %s ] = 0 ;\n' % ii )
+        bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
+
     for cr, mms in mcu.items():
-        bits.append( '    next[ %s ] |= ( (prev[ %s ] & %s) %s %s ); // %s\n' % (
+        bits.append( '    chunks[ %s ] |= ( (prev_%s & %s) %s %s ); // %s\n' % (
             cr[2] ,
             cr[0] ,
-            hex( sum( (1 << mm) for mm in mms ) ) + 'ull',
+            hex( sum( (1 << mm) for mm in mms ) ) + 'ull' ,
             '>>' if cr[1] < 0  else '<<' ,
             -cr[1] if cr[1] < 0 else cr[1] ,
             ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
         ))
+    
     bits.append( '    break;\n' )
+    bits.append( '  }\n' )
     bits.append( '}\n' )
     
     return ''.join( bits )
@@ -294,6 +453,35 @@ def backpropagate_free_transitions( nodes ):
   
 ##
 
+def mark_ends( nodes ):
+    for node in nodes:
+        node.mark_if_end()
+    return
+
+##
+
+def extract_ends( nodes ):
+    out = []
+    for node in nodes:
+        if node.is_end():
+            out.append( node.index() )
+    return out
+
+##
+
+def generate_end_checks( chunkSize, ends ):
+    bits = []
+    for end in ends:
+        bits.append(
+            ' (chunks[ %s ] & %s) ' % (
+                end // chunkSize ,
+                1 << (end % chunkSize) ,
+            )
+        )
+    return ' ( ' + ' | '.join(bits) + ' ) '
+
+##
+
 def enumerate_transitions( transitions ):
     for no, node in enumerate( transitions ):
         node.set_index( no )
@@ -322,9 +510,8 @@ def create_and_connect_nodes( operationTree ):
     stop  = Node()
     end   = Node()
     
-    stop.connect( MatchDone(), end )
-    
     operationTree.create_and_thread_nodes( start, stop )
+    stop.connect( True, end )
     
     return start, end
 
@@ -332,6 +519,7 @@ class Node():
     def __init__( self ):
         self._outs  = []
         self._index = None
+        self._end   = False
         return
     
     def __repr__( self ):
@@ -378,6 +566,23 @@ class Node():
                         seen.append( otherOut )
         
         self._outs = patched
+    
+    def is_end( self ):
+        return self._end
+    
+    def mark_if_end( self ):
+        # (True, Node) links will have been dragged back from the terminal node
+        # use them to determine if advancing to this node indicates an end scenario
+        # we can then have anything that performs this transition
+        
+        fixed = []
+        for out in self._outs:
+            if out[0] == True:
+                self._end = True
+            else:
+                fixed.append( out )
+        
+        self._outs = fixed
     
 ## 
 
@@ -688,22 +893,6 @@ class MatchRepetition():
         
         previous.connect( None, stop )
         
-class MatchDone():
-    def __init__( self, matchNewlines = True ):
-        self._matchNewlines = matchNewlines
-        return
-    
-    def __repr__( self ):
-        return '<MatchDone>'
-    
-    def create_and_thread_nodes( self, start, stop ):
-        start.connect( self, stop )
-    
-    def matches( self ):
-        if self._matchNewlines:
-            yield '\n'
-        yield '\0'
-
 class MatchChar():
     def __init__( self, cc, ignoreCase ):
         self._cc         = cc
@@ -912,6 +1101,8 @@ def getopts():
         help   = 'output debugging information',
     )
     
+    # regex options
+    
     parser.add_option(
         '-c', '--chunkSize',
         dest    = 'chunkSize' ,
@@ -921,17 +1112,40 @@ def getopts():
     )
     
     parser.add_option(
-        '-n', '--name',
-        dest    = 'functionName',
-        default = 'knomerx',
-        help    = 'a prefix for the regex bits',
-    )
-    
-    parser.add_option(
         '-i', '--ignore-case',
         dest    = 'ignoreCase',
         action  = 'store_true' ,
         default = False ,
+    )
+    
+    # generator options
+    
+    parser.add_option(
+        '-n', '--name',
+        dest    = 'name',
+        default = 'KmrxExample',
+        help    = 'a prefix for the regex bits',
+    )
+    
+    parser.add_option(
+        '-t', '--template',
+        dest    = 'template',
+        default = 'KMRX_EXAMPLE',
+        help    = 'a term to use in macros',
+    )
+    
+    parser.add_option(
+        '-l', '--library-header',
+        action = 'store_true',
+        dest = 'libraryHeader',
+        help = '-h wouldnt exactly work, would it? make the header',
+    )
+    
+    parser.add_option(
+        '-g', '--grepish',
+        dest   = 'grepish',
+        action = 'store_true',
+        help   = 'output a grep-like program using the regex',
     )
     
     options, args = parser.parse_args()

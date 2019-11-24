@@ -1,0 +1,28 @@
+#!/bin/bash
+
+log(){ >&2 echo "$@" ; }
+die(){ log "$@" ; exit 1 ; }
+
+##
+
+if [ -z "$1" ] ; then
+    RX="hello world"
+else
+    RX="$1"
+fi
+
+mkdir -p ./bld || die could not create bld/ directory
+
+./tools/rxengine.py -g "$RX" > ./bld/source.c || die could not create source
+
+gcc                \
+    -Wall          \
+    -Wextra        \
+    -Werror        \
+    -Wfatal-errors \
+    -std=gnu99     \
+    -o ./bld/rx    \
+    ./bld/source.c \
+    || die failed to compile
+
+log ... compilation complete ./bld/rx
