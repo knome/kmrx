@@ -9,6 +9,7 @@ C_HEADER_TEMPLATE = """\
 #ifndef H_%(templateName)s
 #define H_%(templateName)s
 
+#include <stdio.h>
 #include <stdint.h>
 
 struct kmRx_%(rxName)s {
@@ -24,6 +25,7 @@ kmRx_%(rxName)s__reset(
   struct kmRx_%(rxName)s * rx
 ){
   *rx = (struct kmRx_%(rxName)s) {0};
+  rx->chunks[0] |= 1 ;
 }
 
 // whether the rx is currently in a matching state
@@ -51,6 +53,27 @@ kmRx_%(rxName)s__step(
   %(thatIsASweetSwitchStatementYouMightSay)s
 }
 
+// print out the internal states
+// 
+static
+inline
+void
+kmRx_%(rxName)s__debug(
+  struct kmRx_%(rxName)s * rx
+){
+  uint%(chunkSize)s_t chunkno = 0 ;
+  while( chunkno < %(numChunks)s ){
+    unsigned char bit = 0 ;
+    fprintf( stderr, "chunks:\\n" );
+    while( bit < %(chunkSize)s ){
+      fprintf( stderr, " %%d", !! ( rx->chunks[ chunkno ] & ( 1ull << bit ) ) );
+      bit ++ ;
+    }
+    fprintf( stderr, "\\n" );
+    chunkno ++ ;
+  }
+}
+
 #endif
 // H_%(templateName)s
 
@@ -64,6 +87,14 @@ C_GREP_TEMPLATE = """
 // invoke without a file to print lines on stdin with compiled in regex
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/mman.h>
 
 %(cHeaderTemplate)s
 
@@ -87,7 +118,58 @@ main(
 }
 
 int scan_files( char ** argv ){
-  USE( argv );
+  char * filename = argv[0] ;
+  
+  int fd = open( filename, O_RDONLY );
+  if( fd < 0 ){
+    fprintf( stderr, "could not open %%s : %%d : %%s\\n", filename, errno, strerror( errno ) );
+    exit( 1 );
+  }
+  
+  struct stat out ;
+  if( fstat( fd, &out ) < 0 ){
+    fprintf( stderr, "could not stat %%s : %%d : %%s\\n", filename, errno, strerror( errno ) );
+    exit( 1 );
+  }
+  
+  char * start = mmap( NULL, out.st_size, PROT_READ, MAP_PRIVATE, fd, 0 );
+  if( start == MAP_FAILED ){
+    fprintf( stderr, "could not mmap %%s : %%d : %%s\\n", filename, errno, strerror( errno ) );
+    exit( 1 ) ;
+  }
+  
+  ////
+  
+  struct kmRx_%(rxName)s state ;
+  kmRx_%(rxName)s__reset( & state );
+  
+  if( out.st_size < 0 ){
+    fprintf( stderr, "that is not possible\\n" );
+    exit( 1 );
+  }
+  
+  uint64_t filesize = (uint64_t) out.st_size ;
+  char *   head     = start                  ;
+  size_t   offset   = 0                      ;
+  
+  while( offset < filesize ){
+    // kmRx_%(rxName)s__debug( & state );
+    
+    kmRx_%(rxName)s__step( & state, start[ offset ] );
+    
+    if( start[ offset ] == '\\n' ){
+      if( kmRx_%(rxName)s__matches( & state ) ){
+        size_t span = &start[offset] - head ;
+        printf( "%%.*s\\n", (int) span, head );
+      }
+      offset ++ ;
+      head = &start[offset];
+      kmRx_%(rxName)s__reset( & state );
+    } else {
+      offset ++ ;
+    }
+  }
+  
   return 1 ;
 }
 
@@ -231,6 +313,8 @@ def main():
         }
         
         template = C_GREP_TEMPLATE % {
+            'chunkSize'       : str( options.chunkSize ) ,
+            'rxName'          : options.name ,
             'cHeaderTemplate' : header ,
         }
         
@@ -314,6 +398,14 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
         bits.append( '  }\n' )
     
     bits.append( '  default:{\n' )
+    for chunk in set( cr[0] for (cr,_) in mcrs ):
+        bits.append(
+            '    uint%(chunkSize)s_t prev_%(chunk)s = chunks[ %(chunk)s ];\n' % {
+                'chunkSize' : chunkSize ,
+                'chunk'     : chunk     ,
+            }
+        )
+    
     for ii in range( maxChunk + 1 ):
         bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
 
@@ -473,7 +565,7 @@ def generate_end_checks( chunkSize, ends ):
     bits = []
     for end in ends:
         bits.append(
-            ' (chunks[ %s ] & %s) ' % (
+            ' (chunks[ %s ] & %sull) ' % (
                 end // chunkSize ,
                 1 << (end % chunkSize) ,
             )
@@ -792,6 +884,8 @@ class MatchCharacterClass():
                 dangler = None
                 pendingDash = None
             else:
+                if dangler != None:
+                    self._cc.add( dangler )
                 dangler = cc
         
         if dangler != None:
@@ -801,6 +895,9 @@ class MatchCharacterClass():
             self._cc.add( pendingDash )
         
         return
+    
+    def __repr__( self ):
+        return '<MatchCharacterClass %s>' % repr( self._spec )
     
     def create_and_thread_nodes( self, start, stop ):
         start.connect( self, stop )
