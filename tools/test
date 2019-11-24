@@ -11,11 +11,38 @@ else
     RX="$1"
 fi
 
+case "$2" in
+    [0-9])
+        OPT="$2"
+        ;;
+    "")
+        OPT=0
+        ;;
+    *)
+        die opt value must be a number
+        ;;
+esac
+
+[ -z "$CC" ] && CC="gcc"
+
 mkdir -p ./bld || die could not create bld/ directory
 
 ./tools/rxengine.py -g "$RX" > ./bld/source.c || die could not create source
 
-gcc                \
+${CC}                \
+    -S             \
+    -O"$OPT"       \
+    -Wall          \
+    -Wextra        \
+    -Werror        \
+    -Wfatal-errors \
+    -std=gnu99     \
+    -o ./bld/rx.s  \
+    ./bld/source.c \
+    || die failed to compile
+
+${CC}                \
+    -O"$OPT"       \
     -Wall          \
     -Wextra        \
     -Werror        \

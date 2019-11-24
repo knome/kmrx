@@ -24,7 +24,7 @@ void
 kmRx_%(rxName)s__reset(
   struct kmRx_%(rxName)s * rx
 ){
-  *rx = (struct kmRx_%(rxName)s) {0};
+  *rx = (struct kmRx_%(rxName)s) {{0}};
   rx->chunks[0] |= 1 ;
 }
 
@@ -55,6 +55,14 @@ kmRx_%(rxName)s__step(
 
 // print out the internal states
 // 
+
+static
+inline
+void
+kmRx_%(rxName)s__debug(
+  struct kmRx_%(rxName)s *
+) __attribute__((unused)) ;
+
 static
 inline
 void
@@ -368,8 +376,8 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
             else:
                 bits.append( ' ' )
             cc += 1
-            bits.append( 'case \'\\x%s\':{' % hex( ord(kk) )[2:].rjust(2,'0') )
-        bits.append( '\n' )
+            bits.append( 'case \'\\x%s\': ' % hex( ord(kk) )[2:].rjust(2,'0') )
+        bits.append( '{\n' )
         
         for chunk in set( cr[0] for (cr,_) in mcrs ):
             bits.append(
@@ -379,12 +387,11 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
                 }
             )
         
-        # TODO: instead we should write on first, merge on following, and 0 if untouched
-        # 
-        for ii in range( maxChunk + 1 ):
-            bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
+        unused = set( ii for ii in range( maxChunk + 1 ) )
         
         for cr, mms in mcrs:
+            if cr[0] in unused:
+                unused.remove( cr[0] )
             bits.append( '    chunks[ %s ] |= ( (prev_%s & %s) %s %s ); // %s\n' % (
                 cr[2] ,
                 cr[0] ,
@@ -394,11 +401,15 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
                 ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
             ))
         
+        for ii in unused:
+            bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
+        
         bits.append( '    break;\n\n' )
         bits.append( '  }\n' )
     
     bits.append( '  default:{\n' )
-    for chunk in set( cr[0] for (cr,_) in mcrs ):
+    
+    for chunk in set( cr[0] for (cr,_) in mcu ):
         bits.append(
             '    uint%(chunkSize)s_t prev_%(chunk)s = chunks[ %(chunk)s ];\n' % {
                 'chunkSize' : chunkSize ,
@@ -406,10 +417,11 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
             }
         )
     
-    for ii in range( maxChunk + 1 ):
-        bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
-
+    unused = set( ii for ii in range( maxChunk + 1 ) )
+    
     for cr, mms in mcu.items():
+        if cr[0] in unused:
+            unused.remove( cr[0] )
         bits.append( '    chunks[ %s ] |= ( (prev_%s & %s) %s %s ); // %s\n' % (
             cr[2] ,
             cr[0] ,
@@ -419,6 +431,9 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
             ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
         ))
     
+    for ii in unused:
+        bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
+        
     bits.append( '    break;\n' )
     bits.append( '  }\n' )
     bits.append( '}\n' )
