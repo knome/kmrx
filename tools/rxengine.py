@@ -111,24 +111,36 @@ C_GREP_TEMPLATE = """
 
 #define USE(x) do{(void)(x);}while(0)
 
-int scan_files( char ** );
+#define KMRX_PAGE_SIZE (4096)
+#define KMRX_BUFFER_SIZE (KMRX_PAGE_SIZE * 8)
+
+// strings longer that buffer size in stdio/read mode will be dropped
+
+int scan_files_mmap( char ** );
+int scan_files_read( char ** );
 int scan_stdio();
+int scan_files_common( int ) ; // fd
 
 int
 main(
   int     argc ,
   char ** argv
 ){
-  if( argc - 1 ){
-    return scan_files( argv + 1 );
-  } else {
+  if( argc - 1 == 1 ){
+    return scan_files_mmap( argv + 1 );
+  } else if( argc - 1 == 2 ){
+    return scan_files_read( argv + 1 );
+  } else if ( argc - 1 == 0 ){
     return scan_stdio();
+  } else {
+    fprintf( stderr, "bad args\\n" );
+    return 1 ;
   }
   
   return 0 ;
 }
 
-int scan_files( char ** argv ){
+int scan_files_mmap( char ** argv ){
   char * filename = argv[0] ;
   
   int fd = open( filename, O_RDONLY );
@@ -188,7 +200,115 @@ int scan_files( char ** argv ){
 }
 
 int scan_stdio(){
-  return 1 ;
+  return scan_files_common( 1 );
+}
+
+int scan_files_read( char ** argv ){
+  char * filename = argv[0] ;
+  
+  int fd = open( filename, O_RDONLY );
+  if( fd < 0 ){
+    fprintf( stderr, "could not open %%s : %%d : %%s\\n", filename, errno, strerror( errno ) );
+    exit( 1 ) ;
+  }
+  
+  return scan_files_common( fd );
+}
+
+int scan_files_common( int fd ){
+  
+  struct kmRx_%(rxName)s state ;
+  kmRx_%(rxName)s__reset( & state );
+  
+  char buffer [ KMRX_BUFFER_SIZE ];
+  ssize_t start    = 0 ; // start of current buffer data
+  ssize_t end      = 0 ; // end of current buffer data
+  int dropping     = 0 ; // whether we have started dropping data because a string was too large
+  int success      = 0 ; // whether we have found any matching strings
+  
+  while(1){
+    
+    if( start == end ){
+      start = end = 0 ;
+    }
+    
+    ssize_t amountToRead =
+       ( start == end
+         ? KMRX_BUFFER_SIZE
+         : ( end > start
+             ? KMRX_BUFFER_SIZE - end
+             : start - end
+           )
+       );
+    
+    ssize_t amount = read( fd, &buffer[end], amountToRead );
+    if( amount < 0 ){
+      fprintf( stderr, "error reading file : %%d : %%s\\n", errno, strerror( errno ) );
+      exit( 1 );
+    }
+    
+    if( amount == 0 ){
+      // eof
+      fflush( stdout );
+      return ! success ;
+    }
+    
+    ssize_t offset = end ;
+    
+    end += amount ;
+    if( end == KMRX_BUFFER_SIZE ){
+      end = 0 ;
+    }
+    
+    int startDropping = start == end ;
+    
+    while( offset != end ){
+      
+      if( buffer[ offset ] == '\\n' ){
+        
+        if( (! dropping) && kmRx_%(rxName)s__matches( & state ) ){
+          success = 1 ;
+          if( offset < start ){
+            ssize_t toend = &buffer[ KMRX_BUFFER_SIZE ] - &buffer[start] ;
+            ssize_t tooff = &buffer[ offset ] - &buffer[0] ;
+            
+            printf( "%%.*s"   , (int) toend, &buffer[start] );
+            printf( "%%.*s\\n", (int) tooff, buffer );
+          } else {
+            ssize_t span = offset - start ;
+            
+            printf( "%%.*s\\n", (int) span, &buffer[start] );
+          }
+        }
+        
+        offset ++ ;
+        startDropping = 0 ;
+        dropping = 0 ;
+        if( offset == KMRX_BUFFER_SIZE ){ 
+          offset = 0 ;
+          start  = 0 ;
+        } else {
+          start  = offset ;
+        }
+        
+        kmRx_%(rxName)s__reset( & state );
+        
+      } else {
+        kmRx_%(rxName)s__step( & state, buffer[ offset ] );
+        
+        offset ++ ;
+        if( offset == KMRX_BUFFER_SIZE ){
+          offset = 0 ;
+        }
+      }
+    }
+    
+    if( (! dropping) && startDropping ){
+      fprintf( stderr, "line too long\\n" );
+      dropping = 1 ;
+    }
+    
+  }
 }
 
 """
@@ -393,11 +513,10 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
                 }
             )
         
-        unused = set( ii for ii in range( maxChunk + 1 ) )
+        for ii in set( cr[2] for cr,_ in mcrs ):
+            bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
         
         for cr, mms in mcrs:
-            if cr[0] in unused:
-                unused.remove( cr[0] )
             bits.append( '    chunks[ %s ] |= ( (prev_%s & %s) %s %s ); // %s\n' % (
                 cr[2] ,
                 cr[0] ,
@@ -406,9 +525,6 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
                 -cr[1] if cr[1] < 0 else cr[1] ,
                 ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
             ))
-        
-        for ii in unused:
-            bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
         
         bits.append( '    break;\n\n' )
         bits.append( '  }\n' )
@@ -423,11 +539,10 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
             }
         )
     
-    unused = set( ii for ii in range( maxChunk + 1 ) )
+    for ii in set( cr[2] for cr,_ in mcrs ):
+        bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
     
     for cr, mms in mcu.items():
-        if cr[0] in unused:
-            unused.remove( cr[0] )
         bits.append( '    chunks[ %s ] |= ( (prev_%s & %s) %s %s ); // %s\n' % (
             cr[2] ,
             cr[0] ,
@@ -437,9 +552,6 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
             ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
         ))
     
-    for ii in unused:
-        bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
-        
     bits.append( '    break;\n' )
     bits.append( '  }\n' )
     bits.append( '}\n' )
