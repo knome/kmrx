@@ -411,7 +411,20 @@ def parse_into_operation_tree( rx, ignoreCase ):
                 continue
         
         if stack[-1][0] == 'repetition':
-            raise Exception( 'unimplemented' )
+            if cc == '}':
+                # get element we were building
+                rep = stack.pop()
+                # get previous matcher in current run
+                if not stack[-1][1]: raise Exception( 'dangling {}' )
+                prev = stack[-1][1].pop()
+                # create new repetition matcher
+                mr = MatchRepetition( rep[1], prev )
+                # slide it back into the run
+                stack[-1][1].append( mr )
+                continue
+            else:
+                stack[-1][1].append( cc )
+                continue
         
         # check for structural characters if we're not escaped
         # 
@@ -468,10 +481,11 @@ def parse_into_operation_tree( rx, ignoreCase ):
                 continue
             
             if cc == '{':
-                raise Exception( 'unimplemented' )
+                stack.append( ('repetition', []) )
+                continue
             
             if cc == '}':
-                raise Exception( 'unimplemented' )
+                raise Exception( 'bare } outside repetition {...}' )
         
         # otherwise we're just adding a specific matcher
         # the matcher added will differ based on whether the character was escaped
@@ -497,6 +511,8 @@ def parse_into_operation_tree( rx, ignoreCase ):
                 matchType = MatchChar( '\f', ignoreCase = ignoreCase )
             elif cc == 'v':
                 matchType = MatchChar( '\v', ignoreCase = ignoreCase )
+            elif cc == '\\':
+                matchType = MatchChar( '\\', ignoreCase = ignoreCase )
             
             # character classes
             # 
@@ -514,7 +530,7 @@ def parse_into_operation_tree( rx, ignoreCase ):
                 matchType = MatchNotWord()
             
             else:
-                raise Exception( 'unknown escape match' )
+                raise Exception( 'unknown escape match : %s' % repr( cc ) )
             
         else: # not escaped
             
@@ -603,6 +619,75 @@ class MatchCharacterClass():
                 else:
                     yield cc
 
+
+class MatchRepetition():
+    def __init__( self, spec, mm ):
+        self._spec = spec
+        self._mm = mm
+        
+        chunks = ''.join( spec ).split(',')
+        
+        if len( chunks ) == 1:
+            chunk = chunks[0].strip()
+            if chunk == '':
+                self._min = 0
+                self._max = None
+            elif chunk.isdigit():
+                self._min = int(chunk, 10)
+                self._max = int(chunk, 10)
+            else:
+                raise Exception( 'garbage in {} : %s' % repr( spec ) )
+        
+        elif len( chunks ) == 2:
+            first = chunks[0].strip()
+            if first == '':
+                self._min = 0
+            elif first.isdigit():
+                self._min = int(first,10)
+            else:
+                raise Exception( 'garbage in first slot of {} : %s' % repr( spec ) )
+            
+            second = chunks[1].strip()
+            if second == '':
+                self._max = None
+            elif second.isdigit():
+                self._max = int(second,10)
+            else:
+                raise Exception( 'garbage in second slot of {} : %s' % repr( spec ) )
+            
+            if self._max != None:
+                if self._min > self._max:
+                    raise Exception( 'cannot have bigger min than max in {} : %s' % repr( spec ) )
+            
+        else:
+            raise Exception( 'too many slots in {} : %s' % repr( spec ) )
+    
+    def create_and_thread_nodes( self, start, stop ):
+        # if current (1-index) > min, we have to let a bypass
+        # if max we have to thread through max nodes
+        # if max == None we have to thread through min nodes and then * out
+        # if min == 0 and max == None, we're literally a *
+        
+        previous = start
+        dangling = False
+        for ii in range( self._min ):
+            if dangling != None:
+                node = Node()
+                self._mm.create_and_thread_nodes( previous, node )
+                previous = node
+            
+            dangling = True
+        
+        if self._max != None:
+            for ii in range( self._min, self._max ):
+                if dangling != None:
+                    node = Node()
+                    self._mm.create_and_thread_nodes( previous, node )
+                    previous.connect( None, stop )
+                    previous = node
+        
+        previous.connect( None, stop )
+        
 class MatchDone():
     def __init__( self, matchNewlines = True ):
         self._matchNewlines = matchNewlines
@@ -747,14 +832,24 @@ class MatchDigit():
     
     def create_and_thread_nodes( self, start, stop ):
         start.connect( self, stop )
-
+    
+    def matches( self ):
+        for cc in '0123456789':
+            yield cc
+    
 class MatchNotDigit():
     def __repr__( self ):
         return '<MatchNotDigit>'
     
     def create_and_thread_nodes( self, start, stop ):
         start.connect( self, stop )
-
+    
+    def matches( self ):
+        for ii in range( 256 ):
+            cc = chr( ii )
+            if cc not in '0123456789':
+                yield cc
+    
 class MatchWhitespace():
     def __repr__( self ):
         return '<MatchWhitespace>'
@@ -762,12 +857,22 @@ class MatchWhitespace():
     def create_and_thread_nodes( self, start, stop ):
         start.connect( self, stop )
     
+    def matches( self ):
+        for cc in ' \t\n\r\f\v':
+            yield cc
+    
 class MatchNotWhitespace():
     def __repr__( self ):
         return '<MatchNotWhitespace>'
     
     def create_and_thread_nodes( self, start, stop ):
         start.connect( self, stop )
+    
+    def matches( self ):
+        for ii in range( 256 ):
+            cc = chr( ii )
+            if cc not in ' \t\n\r\f\v':
+                yield cc
 
 WORD = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
 
