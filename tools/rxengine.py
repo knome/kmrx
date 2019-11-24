@@ -178,7 +178,7 @@ int scan_files_mmap( char ** argv ){
   int success = 0 ;
   
   while( offset < filesize ){
-    if( start[ offset ] == '\\n' || start[ offset ] == '\\n' ){
+    if( start[ offset ] == '\\n' ){
       if( kmRx_%(rxName)s__matches( & state ) ){
         success = 1 ;
         size_t span = &start[offset] - head ;
@@ -264,7 +264,9 @@ int scan_files_common( int fd ){
     
     do {
       
-      if( buffer[ offset ] == '\\n' || buffer[ offset ] == '\\r' ){
+      // TODO skip \\r ?
+      
+      if( buffer[ offset ] == '\\n' ){
         
         if( (! dropping) && kmRx_%(rxName)s__matches( & state ) ){
           success = 1 ;
@@ -292,6 +294,17 @@ int scan_files_common( int fd ){
         }
         
         kmRx_%(rxName)s__reset( & state );
+        
+        // fast forward to the next potentially matching character or the end
+        // only if the bloom is set, though ( we can't use a 0 bloom for this )
+        if( %(bloomChar)s ){
+          while( offset != end && (buffer[offset] & %(bloomChar)s) != buffer[offset] ){
+            offset ++ ;
+            if( offset == KMRX_BUFFER_SIZE ){
+              offset = 0 ;
+            }
+          }
+        }
         
       } else {
         kmRx_%(rxName)s__step( & state, buffer[ offset ] );
@@ -359,6 +372,18 @@ def main():
     # reducing the number of states the final shifter will need to manipuate
     # 
     transitions = extract_transitions( start )
+    
+    # now we extract all of the characters that transition from the
+    # start state to any of the first matches
+    # ( this will let us rapidly skip to the first matching item )
+    # 
+    startingChars = extract_starting_characters( start )
+    
+    # we combine all of the characters in order to create a tiny bloom filter
+    # we can modify this into something more interesting later ( a cheap
+    # rotation on some larger value to create fewer false positives?
+    # 
+    bloomChar = combine_into_bloom( startingChars )
     
     if options.debug:
         show_connections( transitions )
@@ -450,6 +475,7 @@ def main():
             'chunkSize'       : str( options.chunkSize ) ,
             'rxName'          : options.name ,
             'cHeaderTemplate' : header ,
+            'bloomChar'       : bloomChar ,
         }
         
         print( template )
@@ -691,6 +717,24 @@ def extract_ends( nodes ):
         if node.is_end():
             out.append( node.index() )
     return out
+
+##
+
+def extract_starting_characters( start ):
+    ccs = set()
+    for out in start.outs():
+        for cc in out[0].matches():
+            ccs.add( cc )
+    
+    return ccs
+
+##
+
+def combine_into_bloom( ccs ):
+    combo = 0
+    for cc in ccs:
+        combo |= ord( cc )
+    return combo
 
 ##
 
