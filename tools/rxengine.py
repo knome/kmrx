@@ -161,6 +161,10 @@ int scan_files_mmap( char ** argv ){
     exit( 1 ) ;
   }
   
+  if( madvise( start, out.st_size, MADV_SEQUENTIAL ) < 0 ){
+    fprintf( stderr, "could not madvise mmaped memory for %%s : %%d : %%s\\n", filename, errno, strerror( errno ) );
+  }
+  
   ////
   
   struct kmRx_%(rxName)s state ;
