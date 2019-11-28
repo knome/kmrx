@@ -1120,26 +1120,24 @@ class MatchRepetition():
         # if max we have to thread through max nodes
         # if max == None we have to thread through min nodes and then * out
         # if min == 0 and max == None, we're literally a *
+        # if min == 0 and max == 0, we're a comment
         
         previous = start
-        dangling = False
-        for ii in range( self._min ):
-            if dangling != None:
-                node = Node()
-                self._mm.create_and_thread_nodes( previous, node )
-                previous = node
-            
-            dangling = True
+        for _ in range( self._min ):
+            node = Node()
+            self._mm.create_and_thread_nodes( previous, node )
+            previous = node
         
         if self._max != None:
-            for ii in range( self._min, self._max ):
-                if dangling != None:
-                    node = Node()
-                    self._mm.create_and_thread_nodes( previous, node )
-                    previous.connect( None, stop )
-                    previous = node
-        
-        previous.connect( None, stop )
+            for _ in range( self._min, self._max ):
+                node = Node()
+                self._mm.create_and_thread_nodes( previous, node )
+                previous.connect( None, stop )
+                previous = node
+            previous.connect( None, stop )
+        else:
+            self._mm.create_and_thread_nodes( previous, previous )
+            previous.connect( None, stop )
         
 class MatchChar():
     def __init__( self, cc, ignoreCase ):
