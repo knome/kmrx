@@ -1258,7 +1258,9 @@ class MatchAlternation():
     
     def create_and_thread_nodes( self, start, stop ):
         for run in self._runs:
-            run.create_and_thread_nodes( start, stop )
+            enterNode = Node()
+            start.connect( None, enterNode )
+            run.create_and_thread_nodes( enterNode, stop )
         return
 
 class MatchDigit():
