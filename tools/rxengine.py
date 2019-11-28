@@ -421,21 +421,18 @@ def main():
         debug( 'mcc', mcc )
         debug( 'mcu', mcu )
     
-    cmcc = coalesce_grouped_characters_with_equal_transition_sets( mcc )
+    # unified mask-combinations
+    # 
+    umc = coalesce_grouped_characters_with_equal_transition_sets( mcc, mcu )
     
     if options.debug:
         debug()
-        debug( 'cmcc', cmcc )
-        debug( 'mcu', mcu )
-    
-    # TODO
-    # remove characters that exactly match universal transforms
+        debug( 'umc', umc )
     
     switchStatement = that_is_a_sweet_switch_statement_you_might_say(
         maxChunk  = maxChunk          ,
         chunkSize = options.chunkSize ,
-        cmcc      = cmcc              ,
-        mcu       = mcu               ,
+        umc       = umc               ,
     )
     
     if options.grepish:
@@ -479,34 +476,40 @@ def main():
 
 ##
 
-def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, mcu ):
+def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, umc ):
     bits = []
     
     bits.append( 'switch( cc ){\n' )
     
-    for mcrs, kks in cmcc.items():
+    for mcrs, kks in umc.items():
         bits.append( '  //' )
         cc = 0
-        for kk in sorted( kks ):
+        for kk in sorted( kks, key = (lambda k: (k == None, k)) ):
             if cc == 10:
                 cc = 0
                 bits.append( '\n  // ' )
             else:
                 bits.append( ' ' )
             cc += 1
-            bits.append( repr( kk ) )
+            if kk != None:
+                bits.append( repr( kk ) )
+            else:
+                bits.append( "DEFAULT" )
         bits.append( '\n' )
         
         bits.append( ' ' )
         cc = 0
-        for kk in sorted( kks ):
+        for kk in sorted( kks, key = (lambda k: (k == None, k )) ):
             if cc == 10:
                 cc = 0
                 bits.append( '\n  ' )
             else:
                 bits.append( ' ' )
             cc += 1
-            bits.append( 'case \'\\x%s\': ' % hex( ord(kk) )[2:].rjust(2,'0') )
+            if kk != None:
+                bits.append( 'case \'\\x%s\': ' % hex( ord(kk) )[2:].rjust(2,'0') )
+            else:
+                bits.append( 'default: ' )
         bits.append( '{\n' )
         
         for chunk in set( cr[0] for (cr,_) in mcrs ):
@@ -533,31 +536,6 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
         bits.append( '    break;\n\n' )
         bits.append( '  }\n' )
     
-    bits.append( '  default:{\n' )
-    
-    for chunk in set( cr[0] for (cr,_) in mcu.items() ):
-        bits.append(
-            '    uint%(chunkSize)s_t prev_%(chunk)s = chunks[ %(chunk)s ];\n' % {
-                'chunkSize' : chunkSize ,
-                'chunk'     : chunk     ,
-            }
-        )
-    
-    for ii in set( cr[2] for cr,_ in mcrs ):
-        bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
-    
-    for cr, mms in mcu.items():
-        bits.append( '    chunks[ %s ] |= ( (prev_%s & %s) %s %s ); // %s\n' % (
-            cr[2] ,
-            cr[0] ,
-            hex( sum( (1 << mm) for mm in mms ) ) + 'ull' ,
-            '>>' if cr[1] < 0  else '<<' ,
-            -cr[1] if cr[1] < 0 else cr[1] ,
-            ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
-        ))
-    
-    bits.append( '    break;\n' )
-    bits.append( '  }\n' )
     bits.append( '}\n' )
     
     return ''.join( bits )
@@ -566,15 +544,16 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, cmcc, m
 
 def coalesce_grouped_characters_with_equal_transition_sets(
     mcc ,
+    mcu ,
 ):
-    cmcc = {}
-    for kk, mcrs in mcc.items():
+    umc = {}
+    for kk, mcrs in list( mcc.items() ) + [ (None, mcu), ]:
         key = tuple( sorted( (cr, tuple(sorted(mms))) for cr, mms in mcrs.items() ) )
-        if key not in cmcc:
-            cmcc[ key ] = []
-        cmcc[ key ].append( kk )
+        if key not in umc:
+            umc[ key ] = []
+        umc[ key ].append( kk )
     
-    return cmcc
+    return umc
 
 ##
 
@@ -589,8 +568,8 @@ def combine_masks_of_transitions_with_equal_chunk_and_rotate(
             ic, im, ir, cc = transition
             key = (ic, ir, cc)
             if key not in combos:
-                combos[ key ] = []
-            combos[ key ].append( im )
+                combos[ key ] = set()
+            combos[ key ].add( im )
         outc[ kk ] = combos
     
     combos = {}
@@ -598,8 +577,8 @@ def combine_masks_of_transitions_with_equal_chunk_and_rotate(
         ic, im, ir, cc = transition
         key = (ic, ir, cc)
         if key not in combos:
-            combos[ key ] = []
-        combos[ key ].append( im )
+            combos[ key ] = set()
+        combos[ key ].add( im )
     outu = combos
     
     return outc, outu
