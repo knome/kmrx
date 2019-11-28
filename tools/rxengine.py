@@ -477,41 +477,68 @@ def main():
 ##
 
 def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, umc ):
+    # if it was still a switch statement
+    
     bits = []
     
-    bits.append( 'switch( cc ){\n' )
+    # 
+    # build a jump table
+    # 
     
-    for mcrs, kks in umc.items():
-        bits.append( '  //' )
-        cc = 0
-        for kk in sorted( kks, key = (lambda k: (k == None, k)) ):
-            if cc == 10:
-                cc = 0
-                bits.append( '\n  // ' )
-            else:
-                bits.append( ' ' )
-            cc += 1
+    jumps = dict(
+        ( ii, None )
+        for ii in range( 256 )
+    )
+    
+    enumeratedTransitions = {}
+    defaultJump = 'clear'
+    for eno, (transitions, kks) in enumerate( umc.items() ):
+        enumeratedTransitions[ eno ] = transitions
+        for kk in kks:
             if kk != None:
-                bits.append( repr( kk ) )
+                jumps[ ord(kk) ] = 'jump_%s' % str( eno )
             else:
-                bits.append( "DEFAULT" )
-        bits.append( '\n' )
+                defaultJump = 'jump_%s' % str( eno )
+    
+    for ii in jumps:
+        if jumps[ ii ] == None:
+            jumps[ ii ] = defaultJump
+    
+    bits.append( ' static void * const jumpTable [ 256 ] = { ' )
+    bits.append( ','.join(
+        ' && %s' % vv
+        for ii, vv in sorted( jumps.items() )
+        )
+    )
+    bits.append( ' };\n' )
+    
+    # bits.append( ' fprintf( stderr, "going to %u\\n", (unsigned char) cc );\n' )
+    bits.append( ' goto *jumpTable[ (unsigned char) cc ];\n' )
+    
+    # 
+    # build the targets
+    # 
+    
+    if 'clear' in jumps.values():
+        bits.append( 'clear: {\n' )
+        for ii in range( maxChunk + 1 ):
+            bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
+        bits.append( '  return;\n' )
+        bits.append( '}\n')
+    
+    for eno, mcrs in enumeratedTransitions.items():
+        kks = umc[ mcrs ]
         
-        bits.append( ' ' )
-        cc = 0
-        for kk in sorted( kks, key = (lambda k: (k == None, k )) ):
-            if cc == 10:
-                cc = 0
-                bits.append( '\n  ' )
-            else:
-                bits.append( ' ' )
-            cc += 1
-            if kk != None:
-                bits.append( 'case \'\\x%s\': ' % hex( ord(kk) )[2:].rjust(2,'0') )
-            else:
-                bits.append( 'default: ' )
-        bits.append( '{\n' )
+        # generate jump target
+        # 
+        bits.append( 'jump_%s:{\n' % eno )
         
+        # 
+        # generate shifty bits
+        # 
+        
+        # read bits before we overwrite them
+        # 
         for chunk in set( cr[0] for (cr,_) in mcrs ):
             bits.append(
                 '    uint%(chunkSize)s_t prev_%(chunk)s = chunks[ %(chunk)s ];\n' % {
@@ -520,9 +547,13 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, umc ):
                 }
             )
         
-        for ii in set( cr[2] for cr,_ in mcrs ):
+        # overwrite them
+        # 
+        for ii in range( maxChunk + 1 ):
             bits.append( '    chunks[ %s ] = 0 ;\n' % ii )
         
+        # write updated bits
+        # 
         for cr, mms in mcrs:
             bits.append( '    chunks[ %s ] |= ( (prev_%s & %s) %s %s ); // %s\n' % (
                 cr[2] ,
@@ -533,10 +564,10 @@ def that_is_a_sweet_switch_statement_you_might_say( maxChunk, chunkSize, umc ):
                 ', '.join( '(%s,%s)' % (mm,mm+cr[1]) for mm in mms) ,
             ))
         
-        bits.append( '    break;\n\n' )
+        # jump done
+        # 
+        bits.append( '  return ;\n' )
         bits.append( '  }\n' )
-    
-    bits.append( '}\n' )
     
     return ''.join( bits )
 
