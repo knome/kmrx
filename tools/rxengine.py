@@ -1043,7 +1043,7 @@ class MatchCharacterClass():
             self._cc.add( dangler )
         
         if pendingDash:
-            self._cc.add( pendingDash )
+            self._cc.add( '-' )
         
         return
     
